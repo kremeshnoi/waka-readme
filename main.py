@@ -150,6 +150,10 @@ class WakaInput:
     language_count: str | int = os.getenv("INPUT_LANG_COUNT") or 5
     stop_at_other: str | bool = os.getenv("INPUT_STOP_AT_OTHER") or False
     ignored_languages: str = os.getenv("INPUT_IGNORED_LANGUAGES", "")
+    show_languages: str | bool = os.getenv("INPUT_SHOW_LANGUAGES") or True
+    show_editors: str | bool = os.getenv("INPUT_SHOW_EDITORS") or False
+    show_operating_systems: str | bool = os.getenv("INPUT_SHOW_OPERATING_SYSTEMS") or False
+    show_categories: str | bool = os.getenv("INPUT_SHOW_CATEGORIES") or False
     # # optional meta
     target_branch: str = os.getenv("INPUT_TARGET_BRANCH", "NOT_SET")
     target_path: str = os.getenv("INPUT_TARGET_PATH", "NOT_SET")
@@ -176,6 +180,10 @@ class WakaInput:
             self.show_total_time = strtobool(self.show_total_time)
             self.show_masked_time = strtobool(self.show_masked_time)
             self.stop_at_other = strtobool(self.stop_at_other)
+            self.show_languages = strtobool(self.show_languages)
+            self.show_editors = strtobool(self.show_editors)
+            self.show_operating_systems = strtobool(self.show_operating_systems)
+            self.show_categories = strtobool(self.show_categories)
         except (ValueError, AttributeError) as err:
             logger.error(err)
             return False
@@ -285,6 +293,44 @@ def _extract_ignored_languages():
         yield igl
 
 
+def make_section(
+    items: list[dict[str, Any]],
+    label: str,
+    /,
+    *,
+    show_header: bool,
+    ignored: set[str] | None = None,
+    max_items: int | None = None,
+    stop_at_other: bool = False,
+):
+    """Render a single statistics section (languages, editors, etc.)."""
+    ignored = ignored or set()
+    visible = [item for item in items if str(item["name"]) not in ignored]
+    if not visible:
+        return ""
+
+    pad_len = len(max((str(item["name"]) for item in visible), key=len))
+    section = f"{label}:\n" if show_header else ""
+
+    for idx, item in enumerate(visible):
+        name = str(item["name"])
+        time = str(item["text"]) if wk_i.show_time else ""
+        ratio = float(item["percent"])
+        bar = make_graph(wk_i.block_style, ratio, wk_i.graph_length, name)
+        section += (
+            f"{name.ljust(pad_len)}   "
+            + f"{time: <16}{bar}   "
+            + f"{ratio:.2f}".zfill(5)
+            + " %\n"
+        )
+        if stop_at_other and name == "Other":
+            break
+        if max_items is not None and max_items > 0 and idx + 1 >= max_items:
+            break
+
+    return section
+
+
 def prep_content(stats: dict[str, Any], /):
     """WakaReadme Prepare Markdown.
 
@@ -307,49 +353,59 @@ def prep_content(stats: dict[str, Any], /):
     elif wk_i.show_total_time and (total_time := stats.get("human_readable_total")):
         contents += f"Total Time: {total_time}\n\n"
 
-    lang_info: list[dict[str, int | float | str]] | None = []
-
-    # Check if any language data exists
-    if not (lang_info := stats.get("languages")):
-        logger.debug("The API data seems to be empty, please wait for a day")
-        contents += "No activity tracked"
-        return contents.rstrip("\n")
-
-    # make lang content
-    pad_len = len(
-        # comment if it feels way computationally expensive
-        max((str(lng["name"]) for lng in lang_info), key=len)
-        # and then do not for get to set `pad_len` to say 13 :)
+    language_count = int(wk_i.language_count)
+    languages_disabled_by_count = (
+        wk_i.show_languages and language_count == 0 and not wk_i.stop_at_other
     )
-    language_count, stop_at_other = int(wk_i.language_count), bool(wk_i.stop_at_other)
-    if language_count == 0 and not wk_i.stop_at_other:
+    if languages_disabled_by_count:
         logger.debug(
             "Set INPUT_LANG_COUNT to -1 to retrieve all language"
             + " or specify a positive number (ie. above 0)"
         )
+
+    sections: list[tuple[str, str, dict[str, Any]]] = []
+    if wk_i.show_languages and not languages_disabled_by_count:
+        ignored = set(_extract_ignored_languages())
+        if ignored:
+            logger.debug(f"Ignoring {', '.join(ignored)}")
+        sections.append((
+            "languages",
+            "Languages",
+            {
+                "ignored": ignored,
+                "max_items": language_count if language_count > 0 else None,
+                "stop_at_other": bool(wk_i.stop_at_other),
+            },
+        ))
+    if wk_i.show_editors:
+        sections.append(("editors", "Editors", {}))
+    if wk_i.show_operating_systems:
+        sections.append(("operating_systems", "Operating Systems", {}))
+    if wk_i.show_categories:
+        sections.append(("categories", "Categories", {}))
+
+    if not sections:
+        logger.debug("All sections are disabled, nothing to render")
         return contents.rstrip("\n")
 
-    ignored_languages = set(_extract_ignored_languages())
-    logger.debug(f"Ignoring {', '.join(ignored_languages)}")
-    for idx, lang in enumerate(lang_info):
-        lang_name = str(lang["name"])
-        if lang_name in ignored_languages:
+    show_header = len(sections) > 1
+    rendered: list[str] = []
+    any_data = False
+    for key, label, kwargs in sections:
+        items = stats.get(key) or []
+        if not items:
             continue
-        lang_time = str(lang["text"]) if wk_i.show_time else ""
-        lang_ratio = float(lang["percent"])
-        lang_bar = make_graph(wk_i.block_style, lang_ratio, wk_i.graph_length, lang_name)
-        contents += (
-            f"{lang_name.ljust(pad_len)}   "
-            + f"{lang_time: <16}{lang_bar}   "
-            + f"{lang_ratio:.2f}".zfill(5)
-            + " %\n"
-        )
-        if language_count == -1:
-            continue
-        if stop_at_other and (lang_name == "Other"):
-            break
-        if idx + 1 >= language_count > 0:  # idx starts at 0
-            break
+        any_data = True
+        block = make_section(items, label, show_header=show_header, **kwargs)
+        if block:
+            rendered.append(block.rstrip("\n"))
+
+    if not any_data:
+        logger.debug("The API data seems to be empty, please wait for a day")
+        contents += "No activity tracked"
+        return contents.rstrip("\n")
+
+    contents += "\n\n".join(rendered)
 
     logger.debug("Contents were made\n")
     return contents.rstrip("\n")

@@ -66,6 +66,22 @@ inputs:
     description: "Ignore space separated, listed languages"
     default: ""
     required: false
+  SHOW_LANGUAGES:
+    description: "Display the languages block"
+    default: "true"
+    required: false
+  SHOW_EDITORS:
+    description: "Display the editors block"
+    default: "false"
+    required: false
+  SHOW_OPERATING_SYSTEMS:
+    description: "Display the operating systems block"
+    default: "false"
+    required: false
+  SHOW_CATEGORIES:
+    description: "Display the categories block"
+    default: "false"
+    required: false
 
   # commit tweaks
   COMMIT_MESSAGE:

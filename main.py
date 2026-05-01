@@ -299,6 +299,7 @@ def make_section(
     /,
     *,
     show_header: bool,
+    pad_len: int,
     ignored: set[str] | None = None,
     max_items: int | None = None,
     stop_at_other: bool = False,
@@ -309,7 +310,6 @@ def make_section(
     if not visible:
         return ""
 
-    pad_len = len(max((str(item["name"]) for item in visible), key=len))
     section = f"{label}:\n" if show_header else ""
 
     for idx, item in enumerate(visible):
@@ -389,6 +389,16 @@ def prep_content(stats: dict[str, Any], /):
         return contents.rstrip("\n")
 
     show_header = len(sections) > 1
+
+    # global pad_len so name column aligns across all sections;
+    # include ignored items too — their long names widen the column
+    # (matches original behavior where IGNORED_LANGUAGES affected layout)
+    all_names: list[str] = []
+    for key, _label, _kwargs in sections:
+        for item in stats.get(key) or []:
+            all_names.append(str(item["name"]))
+    pad_len = len(max(all_names, key=len)) if all_names else 0
+
     rendered: list[str] = []
     any_data = False
     for key, label, kwargs in sections:
@@ -396,7 +406,7 @@ def prep_content(stats: dict[str, Any], /):
         if not items:
             continue
         any_data = True
-        block = make_section(items, label, show_header=show_header, **kwargs)
+        block = make_section(items, label, show_header=show_header, pad_len=pad_len, **kwargs)
         if block:
             rendered.append(block.rstrip("\n"))
 
